@@ -32,11 +32,17 @@
 
 ## 📥 安装步骤
 
-1. 在浏览器中安装 [Tampermonkey (篡改猴)](https://www.tampermonkey.net/) 插件。
-2. 打开最新的脚本代码。
-3. 点击浏览器右上角的 Tampermonkey 图标，选择 **“添加新脚本”**。
-4. 将编辑器中的默认代码替换为脚本中的全部代码。
-5. 保存并启用即可！
+在浏览器中安装 [Tampermonkey (篡改猴)](https://www.tampermonkey.net/) 插件后，您可以选择以下任意一种方式安装脚本：
+
+### 🚀 方式一：推荐（一键安装与自动更新）
+直接访问 Greasy Fork 脚本主页，点击安装即可：
+👉 **[Greasy Fork: 爱看机器人-影视简介](https://greasyfork.org/zh-CN/scripts/586853-%E7%88%B1%E7%9C%8B%E6%9C%BA%E5%99%A8%E4%BA%BA-%E5%BD%B1%E8%A7%86%E7%AE%80%E4%BB%8B)**
+
+### 🛠️ 方式二：手动复制代码（本地备用）
+1. 打开最新的脚本代码文件 [ikanbot-more-info.user.js](ikanbot-more-info.user.js)。
+2. 复制里面的全部代码。
+3. 点击浏览器右上角 Tampermonkey 图标，选择 **“添加新脚本”**。
+4. 清空编辑器中的默认内容，粘贴刚才复制的全部代码并保存。
 
 ---
 
