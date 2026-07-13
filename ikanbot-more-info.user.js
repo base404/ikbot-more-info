@@ -2,11 +2,11 @@
 // @name         爱看机器人-影视简介
 // @namespace    http://tampermonkey.net/
 // @version      2.1
-// @description  为 ikanbot.com 播放页面添加影视简介、豆瓣评分及直达链接，采用 98dou API、豆瓣网页抓取、NeoDB 三源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
+// @description  为 ikanbot.com 播放页面添加影视简介、豆瓣评分及直达链接，采用 WMDB API、豆瓣网页抓取、NeoDB 三源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/play/*
 // @grant        GM_xmlhttpRequest
-// @connect      api.98dou.cn
+// @connect      api.wmdb.tv
 // @connect      movie.douban.com
 // @connect      sec.douban.com
 // @connect      neodb.social
@@ -79,7 +79,7 @@
 
     // 获取源名称提示
     function getSourceName(index) {
-        if (index === 0) return '源: 98dou';
+        if (index === 0) return '源: WMDB';
         if (index === 1) return '源: 豆瓣';
         return '源: NeoDB';
     }
@@ -107,7 +107,7 @@
     // 封装单个源的具体请求逻辑
     function requestSingleSource(index, title, year) {
         if (index === 0) {
-            return fetchFrom98Dou(title, year).then(res => ({ ...res, sourceName: '源: 98dou' }));
+            return fetchFromWmdbtv(title).then(res => ({ ...res, sourceName: '源: WMDB' }));
         } else if (index === 1) {
             return searchDouban(title, year)
                 .then(id => {
@@ -135,10 +135,10 @@
             });
     }
 
-    // --- 接口 1: 主源 98dou API ---
-    function fetchFrom98Dou(title, year) {
+    // --- 接口 1: 替代源 WMDB API ---
+    function fetchFromWmdbtv(title) {
         return new Promise((resolve, reject) => {
-            const apiUrl = `https://api.98dou.cn/api/douban/info?url=${encodeURIComponent(title)}`;
+            const apiUrl = `https://api.wmdb.tv/api/v1/movie/search?q=${encodeURIComponent(title)}`;
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: apiUrl,
@@ -147,31 +147,51 @@
                 },
                 onload: function (response) {
                     if (response.status !== 200) {
-                        reject(new Error(`API 状态码异常: ${response.status}`));
+                        if (response.responseText && response.responseText.includes('Too Many Search')) {
+                            reject(new Error('WMDB 频控拦截：请求太快，请10秒后再试'));
+                        } else {
+                            reject(new Error(`WMDB API 状态码异常: ${response.status}`));
+                        }
                         return;
                     }
                     try {
                         const res = JSON.parse(response.responseText);
-                        if (res.code === 1 && res.data) {
-                            const d = res.data;
-                            if (d.vod_douban_id) {
-                                activeDoubanId = d.vod_douban_id; // 暂存成功的豆瓣 ID
+                        if (res && res.data && res.data.length > 0) {
+                            const d = res.data[0];
+                            if (d.doubanId) {
+                                activeDoubanId = d.doubanId; // 暂存成功的豆瓣 ID
                             }
+                            
+                            let summary = '暂无简介。';
+                            if (d.data && d.data.length > 0 && d.data[0].description) {
+                                summary = d.data[0].description.trim();
+                            }
+                            
+                            let rating = '暂无评分';
+                            if (d.doubanRating && d.doubanRating !== '0') {
+                                rating = d.doubanRating;
+                            }
+                            
+                            let votes = '';
+                            if (d.doubanVotes) {
+                                votes = `${d.doubanVotes}人评价`;
+                            }
+
                             resolve({
-                                doubanId: d.vod_douban_id || '',
-                                rating: d.vod_douban_score && d.vod_douban_score !== '0' ? d.vod_douban_score : '暂无评分',
-                                votes: d.vod_score_num ? `${d.vod_score_num}人评价` : '',
-                                summary: d.vod_content ? d.vod_content.trim() : '暂无简介。'
+                                doubanId: d.doubanId || '',
+                                rating: rating,
+                                votes: votes,
+                                summary: summary
                             });
                         } else {
-                            reject(new Error(res.msg || 'API 内部获取失败'));
+                            reject(new Error('WMDB 数据库无匹配结果'));
                         }
                     } catch (e) {
-                        reject(new Error('JSON 解析失败'));
+                        reject(new Error('WMDB JSON 解析失败'));
                     }
                 },
                 onerror: function () {
-                    reject(new Error('网络连接错误'));
+                    reject(new Error('WMDB 网络连接错误'));
                 }
             });
         });
@@ -285,7 +305,7 @@
     // --- 接口 3: 备用源 2 (NeoDB 联邦宇宙开源书影音 API) ---
     function fetchFromNeoDB(title) {
         return new Promise((resolve, reject) => {
-            const apiUrl = `https://neodb.social/api/catalog/search?query=${encodeURIComponent(title)}&category=movie`;
+            const apiUrl = `https://neodb.social/api/catalog/search?query=${encodeURIComponent(title)}&category=movie,tv`;
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: apiUrl,
