@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         爱看机器人影视简介与豆瓣增强
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  为 ikanbot.com 播放页面添加影视简介、豆瓣评分及直达链接，采用 98dou API、豆瓣网页抓取、NeoDB 三源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/play/*
@@ -218,7 +218,6 @@
         });
     }
 
-    // 网页抓取详情页
     function fetchDoubanDetail(doubanId) {
         return new Promise((resolve, reject) => {
             const detailUrl = `https://movie.douban.com/subject/${doubanId}/`;
@@ -322,7 +321,7 @@
 
                         resolve({
                             doubanId: doubanId,
-                            neodbUrl: bestMatch.id || '', // 暂存 NeoDB 详情页链接
+                            neodbUrl: bestMatch.id || '', // 暂存 NeoDB 详情页链接 (格式如 https://neodb.social/movie/xxxx)
                             rating: bestMatch.rating ? `${bestMatch.rating}` : '暂无评分',
                             votes: bestMatch.rating_count ? `${bestMatch.rating_count}人评分` : '无评分人数',
                             summary: bestMatch.brief ? bestMatch.brief.trim() : '暂无简介。'
@@ -410,8 +409,8 @@
         const isNeoDB = data.sourceName && data.sourceName.includes('NeoDB');
         let displayLink = '';
         if (isNeoDB) {
-            // NeoDB 源：直达 NeoDB 页面，如果无 ID 则跳转 NeoDB 主页
-            const neodbUrl = data.neodbUrl || `https://neodb.social/`;
+            // NeoDB 源：直达 NeoDB 对应详情页。若无 ID 缓存（例如加载失败），则以 NeoDB 搜索页兜底
+            const neodbUrl = data.neodbUrl || `https://neodb.social/search/?q=${encodeURIComponent(info.title)}`;
             displayLink = `<a href="${neodbUrl}" target="_blank" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline;">直达NeoDB ↗</a>`;
         } else {
             // 豆瓣及 98dou 源：直达豆瓣主页，如果无 ID 则通过豆瓣搜索兜底
