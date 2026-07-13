@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         爱看机器人影视简介与豆瓣增强
+// @name         爱看机器人-影视简介
 // @namespace    http://tampermonkey.net/
 // @version      2.1
 // @description  为 ikanbot.com 播放页面添加影视简介、豆瓣评分及直达链接，采用 98dou API、豆瓣网页抓取、NeoDB 三源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
@@ -14,7 +14,7 @@
 // @run-at       document-end
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     // 缓存有效期：7 天 (7 * 24 * 60 * 60 * 1000 毫秒)
@@ -145,7 +145,7 @@
                 headers: {
                     'User-Agent': navigator.userAgent
                 },
-                onload: function(response) {
+                onload: function (response) {
                     if (response.status !== 200) {
                         reject(new Error(`API 状态码异常: ${response.status}`));
                         return;
@@ -170,7 +170,7 @@
                         reject(new Error('JSON 解析失败'));
                     }
                 },
-                onerror: function() {
+                onerror: function () {
                     reject(new Error('网络连接错误'));
                 }
             });
@@ -188,7 +188,7 @@
                     'User-Agent': navigator.userAgent,
                     'Referer': 'https://movie.douban.com/'
                 },
-                onload: function(response) {
+                onload: function (response) {
                     if (response.status !== 200) {
                         reject(new Error(`联想接口错误 (状态码: ${response.status})`));
                         return;
@@ -211,7 +211,7 @@
                         reject(new Error('解析联想 JSON 失败'));
                     }
                 },
-                onerror: function() {
+                onerror: function () {
                     reject(new Error('联想网络错误'));
                 }
             });
@@ -228,14 +228,14 @@
                     'User-Agent': navigator.userAgent,
                     'Referer': 'https://movie.douban.com/'
                 },
-                onload: function(response) {
+                onload: function (response) {
                     const htmlText = response.responseText || '';
                     const finalUrl = response.finalUrl || '';
 
-                    const isVerifyPage = htmlText.includes('sec.douban.com') || 
-                                         finalUrl.includes('sec.douban.com') ||
-                                         htmlText.includes('chk(e)') ||
-                                         htmlText.includes('tok');
+                    const isVerifyPage = htmlText.includes('sec.douban.com') ||
+                        finalUrl.includes('sec.douban.com') ||
+                        htmlText.includes('chk(e)') ||
+                        htmlText.includes('tok');
 
                     if (isVerifyPage) {
                         reject(new Error('NEED_VERIFY'));
@@ -275,7 +275,7 @@
                         summary
                     });
                 },
-                onerror: function() {
+                onerror: function () {
                     reject(new Error('抓取网页网络错误'));
                 }
             });
@@ -292,7 +292,7 @@
                 headers: {
                     'User-Agent': navigator.userAgent
                 },
-                onload: function(response) {
+                onload: function (response) {
                     if (response.status !== 200) {
                         reject(new Error(`NeoDB 接口状态码异常: ${response.status}`));
                         return;
@@ -305,7 +305,7 @@
                             return;
                         }
                         const bestMatch = results[0];
-                        
+
                         let doubanId = '';
                         if (bestMatch.external_resources) {
                             const dbLink = bestMatch.external_resources.find(res => res.url && res.url.includes('douban.com/subject/'));
@@ -330,7 +330,7 @@
                         reject(new Error('NeoDB JSON 解析失败'));
                     }
                 },
-                onerror: function() {
+                onerror: function () {
                     reject(new Error('NeoDB 网络连接错误'));
                 }
             });
@@ -415,18 +415,18 @@
         } else {
             // 豆瓣及 98dou 源：直达豆瓣主页，如果无 ID 则通过豆瓣搜索兜底
             const currentDbId = data.doubanId || activeDoubanId;
-            const doubanUrl = currentDbId 
-                ? `https://movie.douban.com/subject/${currentDbId}/` 
+            const doubanUrl = currentDbId
+                ? `https://movie.douban.com/subject/${currentDbId}/`
                 : `https://search.douban.com/movie/subject_search?search_text=${encodeURIComponent(info.title)}`;
             displayLink = `<a href="${doubanUrl}" target="_blank" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline;">直达豆瓣 ↗</a>`;
         }
-        
+
         // 1. 只有当加载失败（isError === true）时，右上角才展示“重试 ↻”
         const retryLink = data.isError ? `<a id="douban-retry-btn" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline; margin-right: 12px; cursor: pointer;">重试 ↻</a>` : '';
-        
+
         // 2. 只要不是加载中占位，就允许一键换源（即使加载失败了，也能允许点击换源）
-        const switchLink = !data.isPlaceholder 
-            ? `<a id="douban-switch-btn" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline; margin-right: 12px; cursor: pointer;">换源 ⇄</a>` 
+        const switchLink = !data.isPlaceholder
+            ? `<a id="douban-switch-btn" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline; margin-right: 12px; cursor: pointer;">换源 ⇄</a>`
             : '';
 
         box.innerHTML = `
@@ -454,7 +454,7 @@
         if (data.isError) {
             const retryBtn = document.getElementById('douban-retry-btn');
             if (retryBtn) {
-                retryBtn.onclick = function() {
+                retryBtn.onclick = function () {
                     localStorage.removeItem(cacheKey);
                     startLoad(true);
                 };
@@ -465,7 +465,7 @@
         if (!data.isPlaceholder) {
             const switchBtn = document.getElementById('douban-switch-btn');
             if (switchBtn) {
-                switchBtn.onclick = function() {
+                switchBtn.onclick = function () {
                     currentSourceIndex = (currentSourceIndex + 1) % 3;
                     localStorage.setItem('ikanbot_source_index', currentSourceIndex);
                     localStorage.removeItem(cacheKey);
@@ -491,7 +491,7 @@
             toggleSpan.style.display = 'inline';
 
             let isExpanded = false;
-            toggleSpan.addEventListener('click', function() {
+            toggleSpan.addEventListener('click', function () {
                 if (isExpanded) {
                     summarySpan.innerText = shortSummary;
                     toggleSpan.innerText = '[展开]';
