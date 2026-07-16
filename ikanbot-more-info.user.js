@@ -11,33 +11,124 @@
 // @connect      sec.douban.com
 // @connect      neodb.social
 // @require      https://cdnjs.cloudflare.com/ajax/libs/zepto/1.1.6/zepto.min.js
-// @run-at       document-end
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    // 缓存有效期：7 天 (7 * 24 * 60 * 60 * 1000 毫秒)
-    const CACHE_EXPIRE_TIME = 7 * 24 * 60 * 60 * 1000;
+    // ==========================================
+    // 1. 广告弹窗与跳转拦截安全盾 (立即执行，防止劫持)
+    // ==========================================
 
-    // 1. 获取当前影视的唯一标识 (ikanbot_id)
-    const currentIdNode = document.getElementById('current_id');
-    if (!currentIdNode) return;
-    const ikanbotId = currentIdNode.value;
-    if (!ikanbotId) return;
+    // 1.1 拦截 window.open 弹窗
+    const originalOpen = window.open;
+    window.open = function (url, name, specs) {
+        if (!url) return originalOpen.apply(this, arguments);
+        try {
+            const parsedUrl = new URL(url, window.location.href);
+            // 允许放行的域名白名单：当前站、豆瓣、NeoDB、WMDB
+            const allowedDomains = ['ikanbot.com', 'douban.com', 'neodb.social', 'wmdb.tv'];
+            const isAllowed = allowedDomains.some(domain => parsedUrl.hostname.endsWith(domain));
+            if (isAllowed) {
+                return originalOpen.apply(this, arguments);
+            } else {
+                console.warn('[Ikanbot 增强] 已拦截可疑的 window.open 弹窗请求:', url);
+                return null;
+            }
+        } catch (e) {
+            console.warn('[Ikanbot 增强] 已拦截格式异常的 window.open 请求:', url);
+            return null;
+        }
+    };
 
-    // 2. 准备基础信息与缓存键
-    const info = extractMovieInfo();
-    const cacheKey = `ikanbot_douban_cache_${ikanbotId}`;
+    // 1.2 拦截第三方广告域名超链接点击跳转
+    document.addEventListener('click', function (e) {
+        const anchor = e.target.closest('a');
+        if (anchor && anchor.href) {
+            try {
+                if (anchor.href.startsWith('javascript:')) return;
+                const url = new URL(anchor.href, window.location.href);
+                const allowedDomains = ['ikanbot.com', 'douban.com', 'neodb.social', 'wmdb.tv'];
+                const isAllowed = allowedDomains.some(domain => url.hostname.endsWith(domain));
+                if (!isAllowed) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.warn('[Ikanbot 增强] 已拦截指向第三方的广告超链接跳转:', anchor.href);
+                }
+            } catch (err) {
+                // 忽略解析错误
+            }
+        }
+    }, true);
 
-    // 全局暂存已查出的豆瓣 ID，用于在加载失败时依然能渲染“直达豆瓣”链接
-    let activeDoubanId = '';
+    // 1.3 拦截 iframe 劫持 (限制 top 级别导航)
+    function shieldIframe(iframe) {
+        if (!iframe) return;
+        const sandbox = iframe.getAttribute('sandbox');
+        const targetSandbox = 'allow-scripts allow-same-origin allow-forms allow-presentation allow-pointer-lock';
+        if (sandbox !== targetSandbox) {
+            console.log('[Ikanbot 增强] 发现播放器 iframe，正在应用沙盒防护，禁止其导航顶层窗口...');
+            if (!iframe.hasAttribute('allowfullscreen')) {
+                iframe.setAttribute('allowfullscreen', 'true');
+            }
+            if (!iframe.hasAttribute('allow')) {
+                iframe.setAttribute('allow', 'autoplay; fullscreen');
+            } else {
+                let allowAttr = iframe.getAttribute('allow');
+                if (!allowAttr.includes('autoplay')) allowAttr += '; autoplay';
+                if (!allowAttr.includes('fullscreen')) allowAttr += '; fullscreen';
+                iframe.setAttribute('allow', allowAttr);
+            }
+            iframe.setAttribute('sandbox', targetSandbox);
+        }
+    }
 
-    // 3. 读取当前首选源索引 (默认使用 2: NeoDB API，确保稳定性和免人机验证)
-    let currentSourceIndex = parseInt(localStorage.getItem('ikanbot_source_index') || '2', 10);
+    // 动态监听后续插入的 iframe
+    const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.tagName === 'IFRAME') {
+                    shieldIframe(node);
+                } else if (node.querySelectorAll) {
+                    const iframes = node.querySelectorAll('iframe');
+                    iframes.forEach(shieldIframe);
+                }
+            }
+        }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    // 4. 检查并读取缓存
-    const cachedData = getCache(cacheKey);
+    // 兜底扫描
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('iframe').forEach(shieldIframe);
+    });
+
+    // ==========================================
+    // 2. 影视简介与评分逻辑 (等待 DOMContentLoaded 后执行)
+    // ==========================================
+    function initMovieInfoFeature() {
+        // 缓存有效期：7 天 (7 * 24 * 60 * 60 * 1000 毫秒)
+        const CACHE_EXPIRE_TIME = 7 * 24 * 60 * 60 * 1000;
+
+        // 1. 获取当前影视的唯一标识 (ikanbot_id)
+        const currentIdNode = document.getElementById('current_id');
+        if (!currentIdNode) return;
+        const ikanbotId = currentIdNode.value;
+        if (!ikanbotId) return;
+
+        // 2. 准备基础信息与缓存键
+        const info = extractMovieInfo();
+        const cacheKey = `ikanbot_douban_cache_${ikanbotId}`;
+
+        // 全局暂存已查出的豆瓣 ID，用于在加载失败时依然能渲染“直达豆瓣”链接
+        let activeDoubanId = '';
+
+        // 3. 读取当前首选源索引 (默认使用 2: NeoDB API，确保稳定性和免人机验证)
+        let currentSourceIndex = parseInt(localStorage.getItem('ikanbot_source_index') || '2', 10);
+
+        // 4. 检查并读取缓存
+        const cachedData = getCache(cacheKey);
     if (cachedData) {
         if (cachedData.doubanId) {
             activeDoubanId = cachedData.doubanId;
@@ -540,6 +631,13 @@
             sourceName: getSourceName(currentSourceIndex)
         };
         renderUI(errorData);
+    }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initMovieInfoFeature);
+    } else {
+        initMovieInfoFeature();
     }
 
 })();
