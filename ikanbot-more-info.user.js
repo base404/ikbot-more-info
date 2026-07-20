@@ -215,10 +215,10 @@
                 });
                 return requestSingleSource(currentSourceIndex, title, year);
             } else {
-                // 首次自动进入模式：双源联合兜底，依次尝试直到找到含有效信息的源
+                // 首次自动进入模式：双源联合兜底，依次尝试直到成功
                 return new Promise((resolve, reject) => {
                     const queueIndices = [currentSourceIndex, (currentSourceIndex + 1) % 2];
-                    runQueue(queueIndices, 0, title, year, [], null, reject, resolve);
+                    runQueue(queueIndices, 0, title, year, [], reject, resolve);
                 });
             }
         }
@@ -232,13 +232,9 @@
             }
         }
 
-        function runQueue(queueIndices, index, title, year, errors, firstEmptyResult, finalReject, finalResolve) {
+        function runQueue(queueIndices, index, title, year, errors, finalReject, finalResolve) {
             if (index >= queueIndices.length) {
-                if (firstEmptyResult) {
-                    finalResolve(firstEmptyResult);
-                } else {
-                    finalReject(new Error(errors.join('; ')));
-                }
+                finalReject(new Error(errors.join('; ')));
                 return;
             }
             const targetIdx = queueIndices[index];
@@ -253,20 +249,11 @@
             });
 
             requestSingleSource(targetIdx, title, year)
-                .then(res => {
-                    const isDataEmpty = (res.rating === '暂无评分' || res.rating === '无评分') && (res.summary === '暂无简介。' || !res.summary);
-                    if (isDataEmpty && index < queueIndices.length - 1) {
-                        console.log(`[Ikanbot 增强] 数据源 [${targetIdx}] (${getSourceName(targetIdx)}) 无有效评分及简介，自动轮询尝试下一源`);
-                        const savedEmpty = firstEmptyResult || res;
-                        runQueue(queueIndices, index + 1, title, year, errors, savedEmpty, finalReject, finalResolve);
-                    } else {
-                        finalResolve(res);
-                    }
-                })
+                .then(finalResolve)
                 .catch(err => {
                     console.warn(`[Ikanbot 增强] 尝试数据源 [${targetIdx}] (${getSourceName(targetIdx)}) 失败:`, err.message);
                     errors.push(`${getSourceName(targetIdx)}: ${err.message}`);
-                    runQueue(queueIndices, index + 1, title, year, errors, firstEmptyResult, finalReject, finalResolve);
+                    runQueue(queueIndices, index + 1, title, year, errors, finalReject, finalResolve);
                 });
         }
 
@@ -365,17 +352,17 @@
 
                                 let rating = '暂无评分';
                                 let votes = '';
-                                if (d.doubanRating && String(d.doubanRating).trim() !== '0' && String(d.doubanRating).trim() !== '') {
-                                    rating = String(d.doubanRating);
-                                    if (d.doubanVotes && Number(d.doubanVotes) > 0) {
-                                        votes = `${d.doubanVotes}人评价`;
-                                    }
-                                } else if (d.imdbRating && String(d.imdbRating).trim() !== '0' && String(d.imdbRating).trim() !== '') {
+                                if (d.imdbRating && String(d.imdbRating).trim() !== '0' && String(d.imdbRating).trim() !== '') {
                                     rating = String(d.imdbRating);
                                     if (d.imdbVotes && Number(d.imdbVotes) > 0) {
                                         votes = `${d.imdbVotes}人评价 (IMDb)`;
                                     } else {
                                         votes = 'IMDb评分';
+                                    }
+                                } else if (d.doubanRating && String(d.doubanRating).trim() !== '0' && String(d.doubanRating).trim() !== '') {
+                                    rating = String(d.doubanRating);
+                                    if (d.doubanVotes && Number(d.doubanVotes) > 0) {
+                                        votes = `${d.doubanVotes}人评价`;
                                     }
                                 } else if (d.rottenRating && String(d.rottenRating).trim() !== '0' && String(d.rottenRating).trim() !== '') {
                                     rating = String(d.rottenRating);
