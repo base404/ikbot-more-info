@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         爱看机器人-影视简介
 // @namespace    http://tampermonkey.net/
-// @version      2.3
+// @version      2.4
 // @description  为 ikanbot.com 播放页面添加影视简介、评分及类型展示，采用 NeoDB API 与 WMDB API 双源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/play/*
@@ -345,13 +345,26 @@
                                 }
 
                                 let rating = '暂无评分';
-                                if (d.doubanRating && d.doubanRating !== '0') {
-                                    rating = d.doubanRating;
-                                }
-
                                 let votes = '';
-                                if (d.doubanVotes) {
-                                    votes = `${d.doubanVotes}人评价`;
+                                if (d.doubanRating && String(d.doubanRating).trim() !== '0' && String(d.doubanRating).trim() !== '') {
+                                    rating = String(d.doubanRating);
+                                    if (d.doubanVotes && Number(d.doubanVotes) > 0) {
+                                        votes = `${d.doubanVotes}人评价`;
+                                    }
+                                } else if (d.imdbRating && String(d.imdbRating).trim() !== '0' && String(d.imdbRating).trim() !== '') {
+                                    rating = String(d.imdbRating);
+                                    if (d.imdbVotes && Number(d.imdbVotes) > 0) {
+                                        votes = `${d.imdbVotes}人评价 (IMDb)`;
+                                    } else {
+                                        votes = 'IMDb评分';
+                                    }
+                                } else if (d.rottenRating && String(d.rottenRating).trim() !== '0' && String(d.rottenRating).trim() !== '') {
+                                    rating = String(d.rottenRating);
+                                    if (d.rottenVotes && Number(d.rottenVotes) > 0) {
+                                        votes = `${d.rottenVotes}评价 (烂番茄)`;
+                                    } else {
+                                        votes = '烂番茄评分';
+                                    }
                                 }
 
                                 // 提取类型
@@ -365,7 +378,12 @@
                                     }
                                 }
 
+                                // WMDB 详情页链接（若返回数据包含 WMDB 内部 ID 则优先连入详情页，否则兜底搜索页）
+                                const wmdbId = d.id || d._id || d.wmdbId;
+                                const wmdbUrl = wmdbId ? `https://wmdb.tv/zh/movies/${wmdbId}` : `https://wmdb.tv/zh/search?q=${encodeURIComponent(title)}`;
+
                                 resolve({
+                                    wmdbUrl: wmdbUrl,
                                     rating: rating,
                                     votes: votes,
                                     genre: genreText,
@@ -460,7 +478,7 @@
                 const neodbUrl = data.neodbUrl || `https://neodb.social/search/?q=${encodeURIComponent(info.title)}`;
                 displayLink = `<a href="${neodbUrl}" target="_blank" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline;">直达NeoDB ↗</a>`;
             } else {
-                const wmdbUrl = `https://wmdb.tv/zh/search?q=${encodeURIComponent(info.title)}`;
+                const wmdbUrl = data.wmdbUrl || `https://wmdb.tv/zh/search?q=${encodeURIComponent(info.title)}`;
                 displayLink = `<a href="${wmdbUrl}" target="_blank" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline;">直达WMDB ↗</a>`;
             }
 
