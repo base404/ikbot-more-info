@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         爱看机器人-影视简介
 // @namespace    http://tampermonkey.net/
-// @version      2.6
+// @version      2.7
 // @description  为 ikanbot.com 播放页面添加影视简介、评分及类型展示，采用 NeoDB API 与 WMDB API 双源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/play/*
 // @grant        GM_xmlhttpRequest
 // @connect      neodb.social
 // @connect      api.wmdb.tv
+// @connect      wmdb.tv
 // @require      https://cdnjs.cloudflare.com/ajax/libs/zepto/1.1.6/zepto.min.js
 // @run-at       document-start
 // ==/UserScript==
@@ -378,17 +379,40 @@
                                     }
                                 }
 
-                                // WMDB 详情页链接（若包含 WMDB 内部 ID 则优先连入详情页，否则兜底搜索页）
-                                const wmdbId = d.id || d._id || d.wmdbId;
-                                const wmdbUrl = wmdbId ? `https://wmdb.tv/zh/movies/${wmdbId}` : `https://wmdb.tv/zh/search?q=${encodeURIComponent(title)}`;
+                                const defaultSearchUrl = `https://wmdb.tv/zh/search?q=${encodeURIComponent(title)}`;
+                                const apiId = d.id || d._id || d.wmdbId;
 
-                                resolve({
-                                    wmdbUrl: wmdbUrl,
-                                    rating: rating,
-                                    votes: votes,
-                                    genre: genreText,
-                                    summary: summary
-                                });
+                                if (apiId) {
+                                    resolve({
+                                        wmdbUrl: `https://wmdb.tv/zh/movies/${apiId}`,
+                                        rating: rating,
+                                        votes: votes,
+                                        genre: genreText,
+                                        summary: summary
+                                    });
+                                    return;
+                                }
+
+                                // 尝试通过 wmdb.tv 前端页面动态解析 24位 hex 详情页 ID
+                                fetchWmdbWebDetailUrl(title)
+                                    .then(webUrl => {
+                                        resolve({
+                                            wmdbUrl: webUrl || defaultSearchUrl,
+                                            rating: rating,
+                                            votes: votes,
+                                            genre: genreText,
+                                            summary: summary
+                                        });
+                                    })
+                                    .catch(() => {
+                                        resolve({
+                                            wmdbUrl: defaultSearchUrl,
+                                            rating: rating,
+                                            votes: votes,
+                                            genre: genreText,
+                                            summary: summary
+                                        });
+                                    });
                             } else {
                                 reject(new Error('WMDB 数据库无匹配结果'));
                             }
@@ -398,6 +422,33 @@
                     },
                     onerror: function () {
                         reject(new Error('WMDB 网络连接错误'));
+                    }
+                });
+            });
+        }
+
+        // 辅助函数：请求 WMDB 前端搜索页提取详情页 24位 hex ID
+        function fetchWmdbWebDetailUrl(title) {
+            return new Promise((resolve) => {
+                const searchPageUrl = `https://wmdb.tv/zh/search?q=${encodeURIComponent(title)}`;
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: searchPageUrl,
+                    headers: {
+                        'User-Agent': navigator.userAgent
+                    },
+                    onload: function (response) {
+                        if (response.status === 200 && response.responseText) {
+                            const match = response.responseText.match(/\/(?:zh\/)?movies\/([a-f0-9]{24})/i);
+                            if (match && match[1]) {
+                                resolve(`https://wmdb.tv/zh/movies/${match[1]}`);
+                                return;
+                            }
+                        }
+                        resolve(null);
+                    },
+                    onerror: function () {
+                        resolve(null);
                     }
                 });
             });
