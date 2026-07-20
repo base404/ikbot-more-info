@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         爱看机器人-影视简介
 // @namespace    http://tampermonkey.net/
-// @version      2.4
+// @version      2.5
 // @description  为 ikanbot.com 播放页面添加影视简介、评分及类型展示，采用 NeoDB API 与 WMDB API 双源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/play/*
@@ -181,16 +181,6 @@
 
         // --- 数据拉取主入口 ---
         function startLoad(isManual) {
-            const placeholderData = {
-                rating: '加载中...',
-                votes: '',
-                genre: '加载中...',
-                summary: '正在加载影视评分、类型及简介...',
-                isPlaceholder: true,
-                sourceName: getSourceName(currentSourceIndex)
-            };
-            renderUI(placeholderData);
-
             fetchMovieData(info.title, info.year, isManual)
                 .then(details => {
                     setCache(cacheKey, details);
@@ -213,17 +203,21 @@
             if (isManual) {
                 // 手动指定源模式：只请求当前选中的单源，失败时不进行自动降级
                 console.log(`[Ikanbot 增强] 手动控源模式，仅请求源 [${currentSourceIndex}]: ${getSourceName(currentSourceIndex)}`);
+                renderUI({
+                    rating: '加载中...',
+                    votes: '',
+                    genre: '加载中...',
+                    summary: `正在拉取数据 (${getSourceName(currentSourceIndex)})...`,
+                    isPlaceholder: true,
+                    sourceIndex: currentSourceIndex,
+                    sourceName: getSourceName(currentSourceIndex)
+                });
                 return requestSingleSource(currentSourceIndex, title, year);
             } else {
                 // 首次自动进入模式：双源联合兜底，依次尝试直到成功
                 return new Promise((resolve, reject) => {
-                    const queue = [];
-                    for (let i = 0; i < 2; i++) {
-                        const idx = (currentSourceIndex + i) % 2;
-                        queue.push(() => requestSingleSource(idx, title, year));
-                    }
-                    // 递归依次尝试，直到有一个成功，否则抛出汇总错误
-                    runQueue(queue, 0, [], reject, resolve);
+                    const queueIndices = [currentSourceIndex, (currentSourceIndex + 1) % 2];
+                    runQueue(queueIndices, 0, title, year, [], reject, resolve);
                 });
             }
         }
@@ -231,23 +225,34 @@
         // 封装单个源的具体请求逻辑
         function requestSingleSource(index, title, year) {
             if (index === 0) {
-                return fetchFromNeoDB(title).then(res => ({ ...res, sourceName: '源: NeoDB' }));
+                return fetchFromNeoDB(title).then(res => ({ ...res, sourceIndex: 0, sourceName: '源: NeoDB' }));
             } else {
-                return fetchFromWmdbtv(title).then(res => ({ ...res, sourceName: '源: WMDB' }));
+                return fetchFromWmdbtv(title).then(res => ({ ...res, sourceIndex: 1, sourceName: '源: WMDB' }));
             }
         }
 
-        function runQueue(queue, index, errors, finalReject, finalResolve) {
-            if (index >= queue.length) {
+        function runQueue(queueIndices, index, title, year, errors, finalReject, finalResolve) {
+            if (index >= queueIndices.length) {
                 finalReject(new Error(errors.join('; ')));
                 return;
             }
-            queue[index]()
+            const targetIdx = queueIndices[index];
+            renderUI({
+                rating: '加载中...',
+                votes: '',
+                genre: '加载中...',
+                summary: `正在拉取数据 (${getSourceName(targetIdx)})...`,
+                isPlaceholder: true,
+                sourceIndex: targetIdx,
+                sourceName: getSourceName(targetIdx)
+            });
+
+            requestSingleSource(targetIdx, title, year)
                 .then(finalResolve)
                 .catch(err => {
-                    console.warn(`[Ikanbot 增强] 尝试数据源 [${index}] 失败:`, err.message);
-                    errors.push(err.message);
-                    runQueue(queue, index + 1, errors, finalReject, finalResolve);
+                    console.warn(`[Ikanbot 增强] 尝试数据源 [${targetIdx}] (${getSourceName(targetIdx)}) 失败:`, err.message);
+                    errors.push(`${getSourceName(targetIdx)}: ${err.message}`);
+                    runQueue(queueIndices, index + 1, title, year, errors, finalReject, finalResolve);
                 });
         }
 
@@ -298,7 +303,7 @@
                             const genreText = genreList.length > 0 ? genreList.join(' / ') : '暂无类型';
 
                             resolve({
-                                neodbUrl: bestMatch.id || '', // NeoDB 详情页链接 (如 https://neodb.social/movie/xxxx)
+                                neodbUrl: bestMatch.id || '', // NeoDB 详情页链接
                                 rating: bestMatch.rating ? `${bestMatch.rating}` : '暂无评分',
                                 votes: bestMatch.rating_count ? `${bestMatch.rating_count}人评分` : '无评分人数',
                                 genre: genreText,
@@ -346,12 +351,7 @@
 
                                 let rating = '暂无评分';
                                 let votes = '';
-                                if (d.doubanRating && String(d.doubanRating).trim() !== '0' && String(d.doubanRating).trim() !== '') {
-                                    rating = String(d.doubanRating);
-                                    if (d.doubanVotes && Number(d.doubanVotes) > 0) {
-                                        votes = `${d.doubanVotes}人评价`;
-                                    }
-                                } else if (d.imdbRating && String(d.imdbRating).trim() !== '0' && String(d.imdbRating).trim() !== '') {
+                                if (d.imdbRating && String(d.imdbRating).trim() !== '0' && String(d.imdbRating).trim() !== '') {
                                     rating = String(d.imdbRating);
                                     if (d.imdbVotes && Number(d.imdbVotes) > 0) {
                                         votes = `${d.imdbVotes}人评价 (IMDb)`;
@@ -378,7 +378,7 @@
                                     }
                                 }
 
-                                // WMDB 详情页链接（若返回数据包含 WMDB 内部 ID 则优先连入详情页，否则兜底搜索页）
+                                // WMDB 详情页链接（若包含 WMDB 内部 ID 则优先连入详情页，否则兜底搜索页）
                                 const wmdbId = d.id || d._id || d.wmdbId;
                                 const wmdbUrl = wmdbId ? `https://wmdb.tv/zh/movies/${wmdbId}` : `https://wmdb.tv/zh/search?q=${encodeURIComponent(title)}`;
 
@@ -399,8 +399,6 @@
                     onerror: function () {
                         reject(new Error('WMDB 网络连接错误'));
                     }
-                });
-            });
         }
 
         // --- 缓存管理函数 ---
@@ -472,7 +470,8 @@
             }
 
             // 直达对应源详情链接
-            const isNeoDB = currentSourceIndex === 0;
+            const activeSourceIndex = typeof data.sourceIndex === 'number' ? data.sourceIndex : currentSourceIndex;
+            const isNeoDB = activeSourceIndex === 0;
             let displayLink = '';
             if (isNeoDB) {
                 const neodbUrl = data.neodbUrl || `https://neodb.social/search/?q=${encodeURIComponent(info.title)}`;
@@ -578,9 +577,10 @@
                 rating: '加载失败',
                 votes: '',
                 genre: '暂无类型',
-                summary: `抱歉，该源拉取失败。错误详情: ${msg}`,
+                summary: `抱歉，数据拉取失败。错误详情: ${msg}`,
                 isError: true,
-                sourceName: getSourceName(currentSourceIndex)
+                sourceIndex: currentSourceIndex,
+                sourceName: '双源均未匹配'
             };
             renderUI(errorData);
         }
