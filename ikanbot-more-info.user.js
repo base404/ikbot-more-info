@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         爱看机器人-影视简介
 // @namespace    http://tampermonkey.net/
-// @version      2.2
+// @version      2.3
 // @description  为 ikanbot.com 播放页面添加影视简介、评分及类型展示，采用 NeoDB API 与 WMDB API 双源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/play/*
@@ -460,7 +460,7 @@
                 const neodbUrl = data.neodbUrl || `https://neodb.social/search/?q=${encodeURIComponent(info.title)}`;
                 displayLink = `<a href="${neodbUrl}" target="_blank" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline;">直达NeoDB ↗</a>`;
             } else {
-                const wmdbUrl = `https://wmdb.tv/movie/search?q=${encodeURIComponent(info.title)}`;
+                const wmdbUrl = `https://wmdb.tv/zh/search?q=${encodeURIComponent(info.title)}`;
                 displayLink = `<a href="${wmdbUrl}" target="_blank" style="color: #00a1d6; font-size: 12px; font-weight: normal; text-decoration: underline;">直达WMDB ↗</a>`;
             }
 
