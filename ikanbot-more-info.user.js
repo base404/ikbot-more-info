@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         爱看机器人-全站海报修复与影视简介
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  为 ikanbot.com 修复并接管全站海报显示（解除豆瓣防盗链限制、拦截失效或官方代理），在播放页展示简介与评分。首次使用请在篡改猴弹窗中选择“总是允许此域名”。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/*
@@ -398,7 +398,7 @@
         imgs.forEach(observeImage);
     }
 
-    // 2.9 首次使用提示：向用户解释篡改猴跨域授权提示
+    // 2.9 首次使用提示：向用户解释篡改猴跨域授权提示 (风格与爱看机器人原生白底/青蓝 #00a1d6 主题严格一致)
     function showPermissionGuideToast() {
         try {
             if (localStorage.getItem('ikbot_auth_tip_dismissed') === 'true') return;
@@ -407,23 +407,25 @@
         }
         if (document.getElementById('ikbot-auth-toast')) return;
 
+        const isMobile = typeof window !== 'undefined' && window.innerWidth < 600;
         const toast = document.createElement('div');
         toast.id = 'ikbot-auth-toast';
         toast.style.cssText = `
             position: fixed;
-            bottom: 25px;
-            right: 25px;
+            bottom: ${isMobile ? '15px' : '25px'};
+            right: ${isMobile ? '15px' : '25px'};
+            ${isMobile ? 'left: 15px;' : 'max-width: 360px;'}
             z-index: 999999;
-            background: rgba(15, 23, 42, 0.95);
-            color: #f8fafc;
-            padding: 14px 18px;
-            border-radius: 8px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+            background: #ffffff;
+            color: #333333;
+            padding: 14px 16px;
+            border-radius: 4px;
+            border: 1px solid #eaeaea;
+            border-top: 3px solid #00a1d6;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
             font-size: 13px;
-            line-height: 1.5;
-            max-width: 380px;
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            line-height: 1.6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -433,17 +435,19 @@
 
         toast.innerHTML = `
             <div style="display: flex; align-items: center; justify-content: space-between;">
-                <span style="font-weight: bold; color: #38bdf8; font-size: 14px; display: flex; align-items: center; gap: 4px;">
-                    💡 <span>海报修复权限提示</span>
+                <span style="font-weight: bold; color: #333333; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #00a1d6;"></span>
+                    <span>海报修复授权提示</span>
+                    <span style="font-size: 11px; color: #888888; font-weight: normal;">(爱看增强)</span>
                 </span>
-                <span id="ikbot-auth-close-btn" style="cursor: pointer; color: #94a3b8; font-size: 18px; line-height: 1; padding: 2px;">&times;</span>
+                <span id="ikbot-auth-close-btn" style="cursor: pointer; color: #999999; font-size: 18px; line-height: 1; padding: 0 2px; transition: color 0.2s;" title="关闭">&times;</span>
             </div>
-            <div style="color: #cbd5e1; font-size: 12px;">
-                若浏览器弹出<strong>【篡改猴请求访问外部站点】</strong>提示（访问 <code>doubanio.com</code>），请务必点击<strong>【总是允许此域名】</strong>。
-                <div style="color: #94a3b8; font-size: 11px; margin-top: 4px;">(这是因为本脚本绕过第三方不稳定代理，直接连接豆瓣 CDN 获取高清海报，需要一次性跨域授权)</div>
+            <div style="color: #555555; font-size: 12px;">
+                若浏览器弹出<strong>【篡改猴请求访问外部站点】</strong>提示（访问 <code style="background: #f4f4f4; border: 1px solid #eaeaea; padding: 1px 5px; border-radius: 3px; color: #00a1d6; font-family: monospace;">doubanio.com</code>），请选择<strong>【总是允许此域名】</strong>。
+                <div style="color: #888888; font-size: 11px; margin-top: 4px;">(本脚本直接免代理直连豆瓣 CDN 获取高清海报，需要一次性跨域授权方可正常显示)</div>
             </div>
-            <div style="display: flex; justify-content: flex-end; margin-top: 2px;">
-                <button id="ikbot-auth-ok-btn" style="background: #0284c7; color: #ffffff; border: none; padding: 4px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 500;">我知道了</button>
+            <div style="display: flex; justify-content: flex-end; align-items: center; margin-top: 2px;">
+                <button id="ikbot-auth-ok-btn" style="background: #00a1d6; color: #ffffff; border: 1px solid #00a1d6; padding: 3px 14px; border-radius: 3px; font-size: 12px; cursor: pointer; font-weight: 500; transition: background 0.2s;">我知道了</button>
             </div>
         `;
 
@@ -463,8 +467,16 @@
             container.appendChild(toast);
             const closeBtn = document.getElementById('ikbot-auth-close-btn');
             const okBtn = document.getElementById('ikbot-auth-ok-btn');
-            if (closeBtn) closeBtn.onclick = dismissToast;
-            if (okBtn) okBtn.onclick = dismissToast;
+            if (closeBtn) {
+                closeBtn.onmouseenter = () => closeBtn.style.color = '#333333';
+                closeBtn.onmouseleave = () => closeBtn.style.color = '#999999';
+                closeBtn.onclick = dismissToast;
+            }
+            if (okBtn) {
+                okBtn.onmouseenter = () => okBtn.style.background = '#008bb8';
+                okBtn.onmouseleave = () => okBtn.style.background = '#00a1d6';
+                okBtn.onclick = dismissToast;
+            }
 
             setTimeout(() => {
                 if (document.getElementById('ikbot-auth-toast')) {
