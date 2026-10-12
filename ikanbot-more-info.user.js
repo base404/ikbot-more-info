@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      3.2
 // @description  为 ikanbot.com 修复并接管全站海报显示（解除豆瓣防盗链限制、拦截失效或官方代理），在播放页展示简介与评分。首次使用请在篡改猴弹窗中选择“总是允许此域名”。
-// @author       Antigravity
+// @author       Nuoka
 // @match        *://*.ikanbot.com/*
 // @match        *://ikanbot.com/*
 // @grant        GM_xmlhttpRequest
@@ -195,7 +195,7 @@
                         return decoded;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
 
         // 豆瓣图片地址
@@ -315,7 +315,7 @@
         });
 
         inFlightRequests.set(url, promise);
-        promise.catch(() => {}).finally(() => {
+        promise.catch(() => { }).finally(() => {
             inFlightRequests.delete(url);
         });
         return promise;
@@ -454,7 +454,7 @@
         function dismissToast() {
             try {
                 localStorage.setItem('ikbot_auth_tip_dismissed', 'true');
-            } catch (e) {}
+            } catch (e) { }
             toast.style.opacity = '0';
             toast.style.transform = 'translateY(10px)';
             setTimeout(() => {
