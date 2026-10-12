@@ -1,14 +1,21 @@
 // ==UserScript==
-// @name         爱看机器人-影视简介
+// @name         爱看机器人-全站海报修复与影视简介
 // @namespace    http://tampermonkey.net/
-// @version      2.8
-// @description  为 ikanbot.com 播放页面添加影视简介、评分及类型展示，采用 NeoDB API 与 WMDB API 双源顺序联合兜底机制，支持多源一键切换、缓存与错误重试。
+// @version      3.0
+// @description  为 ikanbot.com 修复全站影视海报预览图（解除豆瓣防盗链限制、拦截失效代理），并在播放页添加简介、评分及类型展示（NeoDB / WMDB 双源兜底）。
 // @author       Antigravity
-// @match        *://*.ikanbot.com/play/*
+// @match        *://*.ikanbot.com/*
+// @match        *://ikanbot.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      neodb.social
 // @connect      api.wmdb.tv
 // @connect      wmdb.tv
+// @connect      *.doubanio.com
+// @connect      doubanio.com
+// @connect      *.douban.com
+// @connect      douban.com
+// @connect      *
 // @require      https://cdnjs.cloudflare.com/ajax/libs/zepto/1.1.6/zepto.min.js
 // @run-at       document-start
 // ==/UserScript==
@@ -26,8 +33,8 @@
         if (!url) return originalOpen.apply(this, arguments);
         try {
             const parsedUrl = new URL(url, window.location.href);
-            // 允许放行的域名白名单：当前站、NeoDB、WMDB
-            const allowedDomains = ['ikanbot.com', 'neodb.social', 'wmdb.tv'];
+            // 允许放行的域名白名单：当前站、NeoDB、WMDB、Douban
+            const allowedDomains = ['ikanbot.com', 'neodb.social', 'wmdb.tv', 'douban.com', 'doubanio.com'];
             const isAllowed = allowedDomains.some(domain => parsedUrl.hostname.endsWith(domain));
             if (isAllowed) {
                 return originalOpen.apply(this, arguments);
@@ -104,7 +111,323 @@
     });
 
     // ==========================================
-    // 2. 影视简介与评分类型逻辑 (等待 DOMContentLoaded 后执行)
+    // 2. 全站影视海报预览图修复引擎 (立即执行，解除豆瓣防盗链 & 拦截失效代理)
+    // ==========================================
+
+    const pageWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+    // 2.1 拦截并中和网站原生失效的图片懒加载配置 (防止将图片重写为已失效的 imgp.ikanbot.eu.org 代理或 403 占位图)
+    try {
+        const dummyLazyOptions = {
+            elements_selector: '.ikbot-disabled-official-lazy'
+        };
+        Object.defineProperty(pageWin, 'lazyLoadOptions', {
+            configurable: true,
+            enumerable: true,
+            get() {
+                return dummyLazyOptions;
+            },
+            set(val) {
+                // 静默忽略 common.js 写入的损坏代理配置
+            }
+        });
+    } catch (e) {
+        console.warn('[Ikanbot 增强] 拦截原生 lazyLoadOptions 失败:', e);
+    }
+
+    // 2.2 注入海报加载与平滑过渡样式
+    function injectPosterStyles() {
+        if (document.getElementById('ikbot-poster-style')) return;
+        const style = document.createElement('style');
+        style.id = 'ikbot-poster-style';
+        style.textContent = `
+            img[data-ikbot-fixed="true"] {
+                opacity: 1 !important;
+                transition: opacity 0.3s ease-in-out !important;
+            }
+            img.ikbot-loading {
+                opacity: 0.6;
+            }
+        `;
+        const target = document.head || document.documentElement;
+        if (target) target.appendChild(style);
+    }
+
+    // 2.3 辅助函数：Base64URL 解码 (用于从 ikanbot 代理链接中还原豆瓣原始图片 URL)
+    function decodeBase64Url(str) {
+        try {
+            let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (base64.length % 4 !== 0) {
+                base64 += '=';
+            }
+            return atob(base64);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // 2.4 提取真实的豆瓣/影视海报原始 URL
+    function extractRealImageUrl(img) {
+        if (!img) return '';
+        if (img.dataset.rawPosterUrl) return img.dataset.rawPosterUrl;
+
+        let raw = img.getAttribute('data-src') || img.getAttribute('src') || '';
+        if (!raw || raw.startsWith('data:image/svg')) {
+            raw = img.getAttribute('data-src') || '';
+        }
+        if (!raw) return '';
+
+        // 如果已经被 ikanbot 原生代理重写过，从参数提取原 URL
+        if (raw.includes('ikanbot.eu.org')) {
+            try {
+                const match = raw.match(/[?&](?:u|url)=([^&]+)/i);
+                if (match && match[1]) {
+                    let param = match[1];
+                    if (param.startsWith('http') || param.includes('%3A') || param.includes('%3a')) {
+                        return decodeURIComponent(param);
+                    }
+                    const decoded = decodeBase64Url(param);
+                    if (decoded && decoded.startsWith('http')) {
+                        return decoded;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        // 豆瓣图片地址
+        if (raw.includes('doubanio.com')) {
+            return raw;
+        }
+
+        // 其他合法的 http/https 图片地址 (排除已失效的 ikanbot.eu.org 代理和本地 403 占位图)
+        if (raw.startsWith('http') && !raw.includes('ikanbot.eu.org') && !raw.includes('tv_default_medium.png')) {
+            return raw;
+        }
+
+        return '';
+    }
+
+    // 2.5 生成优雅的 SVG 海报兜底图 (当豆瓣资源被删或网络彻底中断时，避免显示丑陋的裂图框)
+    function escapeXml(unsafe) {
+        return (unsafe || '').replace(/[<>&'"]/g, function (c) {
+            switch (c) {
+                case '<': return '&lt;';
+                case '>': return '&gt;';
+                case '&': return '&amp;';
+                case '\'': return '&apos;';
+                case '"': return '&quot;';
+            }
+        });
+    }
+
+    function createFallbackPoster(title) {
+        const cleanTitle = (title || '暂无海报').trim().slice(0, 14);
+        const svg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="300" height="420" viewBox="0 0 300 420">
+                <defs>
+                    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stop-color="#1e293b"/>
+                        <stop offset="100%" stop-color="#0f172a"/>
+                    </linearGradient>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#g)" rx="4"/>
+                <g fill="#475569" transform="translate(110, 130)">
+                    <rect width="80" height="60" rx="6" fill="#334155"/>
+                    <circle cx="28" cy="22" r="10" fill="#64748b"/>
+                    <path d="M12 50 L40 30 L68 50 Z" fill="#64748b"/>
+                </g>
+                <text x="150" y="240" fill="#f8fafc" font-size="15" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="600">${escapeXml(cleanTitle)}</text>
+                <text x="150" y="270" fill="#94a3b8" font-size="12" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">海报加载失败</text>
+            </svg>
+        `.trim();
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    }
+
+    // 2.6 海报加载调度器 (带内存缓存、请求去重与并发控制)
+    const posterBlobCache = new Map();   // realUrl -> blobUrl
+    const inFlightRequests = new Map();  // realUrl -> Promise<blobUrl>
+    const pendingQueue = [];             // 待下载任务队列
+    let activeConnections = 0;
+    const MAX_CONCURRENT_DOWNLOADS = 6;  // 最大并发下载数
+
+    function pumpQueue() {
+        while (activeConnections < MAX_CONCURRENT_DOWNLOADS && pendingQueue.length > 0) {
+            const task = pendingQueue.shift();
+            activeConnections++;
+            task().finally(() => {
+                activeConnections--;
+                pumpQueue();
+            });
+        }
+    }
+
+    function fetchPosterAsBlob(url) {
+        if (posterBlobCache.has(url)) {
+            return Promise.resolve(posterBlobCache.get(url));
+        }
+        if (inFlightRequests.has(url)) {
+            return inFlightRequests.get(url);
+        }
+
+        const promise = new Promise((resolve, reject) => {
+            pendingQueue.push(() => {
+                return new Promise((taskDone) => {
+                    // 使用 GM_xmlhttpRequest 突破跨域限制，并伪造豆瓣电影 Referer 头部解除 403/418 防盗链
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: url,
+                        headers: {
+                            'Referer': 'https://movie.douban.com/',
+                            'User-Agent': navigator.userAgent
+                        },
+                        responseType: 'blob',
+                        timeout: 12000,
+                        onload: function (res) {
+                            if (res.status === 200 && res.response) {
+                                try {
+                                    const blobUrl = URL.createObjectURL(res.response);
+                                    posterBlobCache.set(url, blobUrl);
+                                    resolve(blobUrl);
+                                } catch (err) {
+                                    reject(err);
+                                }
+                            } else {
+                                reject(new Error(`海报拉取响应异常: ${res.status}`));
+                            }
+                            taskDone();
+                        },
+                        onerror: function (err) {
+                            reject(new Error('海报网络请求失败'));
+                            taskDone();
+                        },
+                        ontimeout: function () {
+                            reject(new Error('海报请求超时'));
+                            taskDone();
+                        }
+                    });
+                });
+            });
+            pumpQueue();
+        });
+
+        inFlightRequests.set(url, promise);
+        promise.catch(() => {}).finally(() => {
+            inFlightRequests.delete(url);
+        });
+        return promise;
+    }
+
+    // 修复单个 img 元素
+    function fixSingleImage(img) {
+        if (!img || img.dataset.ikbotFixed === 'true' || img.dataset.ikbotProcessing === 'true') {
+            return;
+        }
+
+        const realUrl = extractRealImageUrl(img);
+        if (!realUrl) return;
+
+        img.dataset.rawPosterUrl = realUrl;
+        img.dataset.ikbotProcessing = 'true';
+        img.classList.add('ikbot-loading');
+
+        fetchPosterAsBlob(realUrl)
+            .then((blobUrl) => {
+                img.src = blobUrl;
+                img.dataset.ikbotFixed = 'true';
+                img.classList.remove('ikbot-loading');
+                img.classList.remove('lazy');
+            })
+            .catch((err) => {
+                console.warn('[Ikanbot 增强] 修复海报失败:', realUrl, err.message);
+                const title = img.getAttribute('alt') || img.getAttribute('title') || '';
+                img.src = createFallbackPoster(title);
+                img.dataset.ikbotFixed = 'true';
+                img.classList.remove('ikbot-loading');
+                img.classList.remove('lazy');
+            })
+            .finally(() => {
+                img.dataset.ikbotProcessing = 'false';
+            });
+    }
+
+    // 2.7 基于 IntersectionObserver 的视口懒加载
+    let posterObserver = null;
+    if (typeof IntersectionObserver !== 'undefined') {
+        posterObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    const img = entry.target;
+                    observer.unobserve(img);
+                    fixSingleImage(img);
+                }
+            });
+        }, {
+            rootMargin: '350px 0px' // 提前 350px 预加载，保证用户向下滚动时海报顺滑呈现
+        });
+    }
+
+    function observeImage(img) {
+        if (!img || img.dataset.ikbotFixed === 'true' || img.dataset.ikbotObserved === 'true') {
+            return;
+        }
+
+        const realUrl = extractRealImageUrl(img);
+        if (!realUrl) return;
+
+        img.dataset.ikbotObserved = 'true';
+        img.dataset.rawPosterUrl = realUrl;
+
+        if (posterObserver) {
+            posterObserver.observe(img);
+        } else {
+            fixSingleImage(img);
+        }
+    }
+
+    // 2.8 扫描并监听 DOM 中的图片
+    function scanImagesInContainer(container) {
+        if (!container || !container.querySelectorAll) return;
+        const imgs = container.querySelectorAll('img[data-src], img.lazy, img[src*="doubanio.com"], img[src*="ikanbot.eu.org"]');
+        imgs.forEach(observeImage);
+    }
+
+    // 启动海报修复引擎
+    function initPosterEngine() {
+        injectPosterStyles();
+
+        // 立即对已有 DOM 进行初次扫描
+        scanImagesInContainer(document.body || document.documentElement);
+
+        // 动态监听后续页面加载或翻页新增的图片
+        const domObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeType === 1) { // ELEMENT_NODE
+                        if (node.tagName === 'IMG') {
+                            observeImage(node);
+                        } else {
+                            scanImagesInContainer(node);
+                        }
+                    }
+                }
+            }
+        });
+        domObserver.observe(document.documentElement, { childList: true, subtree: true });
+
+        // 双重保险：页面就绪和完全载入时再兜底扫描一次
+        document.addEventListener('DOMContentLoaded', () => {
+            scanImagesInContainer(document.body);
+        });
+        window.addEventListener('load', () => {
+            scanImagesInContainer(document.body);
+        });
+    }
+
+    // 立即启动海报修复引擎
+    initPosterEngine();
+
+    // ==========================================
+    // 3. 播放页影视简介与评分类型逻辑 (等待 DOMContentLoaded 后执行)
     // ==========================================
 
     // 类型英文对应中文映射表
@@ -494,12 +817,12 @@
         // 提取影片名称和上映年份
         function extractMovieInfo() {
             const titleNode = document.querySelector('#playList .detail h2.title');
-            const title = titleNode ? titleNode.innerText.trim() : '';
+            const title = titleNode ? (titleNode.innerText || titleNode.textContent || '').trim() : '';
 
             const metaNodes = Array.from(document.querySelectorAll('#playList .detail h3.meta'));
             let year = '';
             for (const node of metaNodes) {
-                const text = node.innerText.trim();
+                const text = (node.innerText || node.textContent || '').trim();
                 if (/^\d{4}$/.test(text)) {
                     year = text;
                     break;
