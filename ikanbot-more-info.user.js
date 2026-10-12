@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         爱看机器人-全站海报修复与影视简介
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  为 ikanbot.com 修复全站影视海报预览图（解除豆瓣防盗链限制、拦截失效代理），并在播放页添加简介、评分及类型展示（NeoDB / WMDB 双源兜底）。
+// @version      3.1
+// @description  为 ikanbot.com 修复并接管全站海报显示（解除豆瓣防盗链限制、拦截失效或官方代理），在播放页展示简介与评分。首次使用请在篡改猴弹窗中选择“总是允许此域名”。
 // @author       Antigravity
 // @match        *://*.ikanbot.com/*
 // @match        *://ikanbot.com/*
@@ -11,6 +11,10 @@
 // @connect      neodb.social
 // @connect      api.wmdb.tv
 // @connect      wmdb.tv
+// @connect      img1.doubanio.com
+// @connect      img2.doubanio.com
+// @connect      img3.doubanio.com
+// @connect      img9.doubanio.com
 // @connect      *.doubanio.com
 // @connect      doubanio.com
 // @connect      *.douban.com
@@ -177,8 +181,8 @@
         }
         if (!raw) return '';
 
-        // 如果已经被 ikanbot 原生代理重写过，从参数提取原 URL
-        if (raw.includes('ikanbot.eu.org')) {
+        // 如果已经被 ikanbot 原生代理重写过，或官方日后更新了其他图片中转代理（如携带 u= 或 url= 参数），均自动解码提取原图
+        if (raw.includes('ikanbot.eu.org') || /[?&](?:u|url)=/i.test(raw)) {
             try {
                 const match = raw.match(/[?&](?:u|url)=([^&]+)/i);
                 if (match && match[1]) {
@@ -334,14 +338,17 @@
             .then((blobUrl) => {
                 img.src = blobUrl;
                 img.dataset.ikbotFixed = 'true';
+                img.dataset.ikbotBlobUrl = blobUrl;
                 img.classList.remove('ikbot-loading');
                 img.classList.remove('lazy');
             })
             .catch((err) => {
                 console.warn('[Ikanbot 增强] 修复海报失败:', realUrl, err.message);
                 const title = img.getAttribute('alt') || img.getAttribute('title') || '';
-                img.src = createFallbackPoster(title);
+                const fallbackSvg = createFallbackPoster(title);
+                img.src = fallbackSvg;
                 img.dataset.ikbotFixed = 'true';
+                img.dataset.ikbotBlobUrl = fallbackSvg;
                 img.classList.remove('ikbot-loading');
                 img.classList.remove('lazy');
             })
@@ -384,11 +391,87 @@
         }
     }
 
-    // 2.8 扫描并监听 DOM 中的图片
+    // 2.8 扫描并监听 DOM 中的图片 (即使官方恢复代理，仍默认全面接管全站海报显示)
     function scanImagesInContainer(container) {
         if (!container || !container.querySelectorAll) return;
-        const imgs = container.querySelectorAll('img[data-src], img.lazy, img[src*="doubanio.com"], img[src*="ikanbot.eu.org"]');
+        const imgs = container.querySelectorAll('img[data-src], img.lazy, img[src*="doubanio.com"], img[src*="ikanbot"], .cover-wp img, .item img, .media img, #playList img');
         imgs.forEach(observeImage);
+    }
+
+    // 2.9 首次使用提示：向用户解释篡改猴跨域授权提示
+    function showPermissionGuideToast() {
+        try {
+            if (localStorage.getItem('ikbot_auth_tip_dismissed') === 'true') return;
+        } catch (e) {
+            return;
+        }
+        if (document.getElementById('ikbot-auth-toast')) return;
+
+        const toast = document.createElement('div');
+        toast.id = 'ikbot-auth-toast';
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            z-index: 999999;
+            background: rgba(15, 23, 42, 0.95);
+            color: #f8fafc;
+            padding: 14px 18px;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+            font-size: 13px;
+            line-height: 1.5;
+            max-width: 380px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-sizing: border-box;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        `;
+
+        toast.innerHTML = `
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span style="font-weight: bold; color: #38bdf8; font-size: 14px; display: flex; align-items: center; gap: 4px;">
+                    💡 <span>海报修复权限提示</span>
+                </span>
+                <span id="ikbot-auth-close-btn" style="cursor: pointer; color: #94a3b8; font-size: 18px; line-height: 1; padding: 2px;">&times;</span>
+            </div>
+            <div style="color: #cbd5e1; font-size: 12px;">
+                若浏览器弹出<strong>【篡改猴请求访问外部站点】</strong>提示（访问 <code>doubanio.com</code>），请务必点击<strong>【总是允许此域名】</strong>。
+                <div style="color: #94a3b8; font-size: 11px; margin-top: 4px;">(这是因为本脚本绕过第三方不稳定代理，直接连接豆瓣 CDN 获取高清海报，需要一次性跨域授权)</div>
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 2px;">
+                <button id="ikbot-auth-ok-btn" style="background: #0284c7; color: #ffffff; border: none; padding: 4px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: 500;">我知道了</button>
+            </div>
+        `;
+
+        function dismissToast() {
+            try {
+                localStorage.setItem('ikbot_auth_tip_dismissed', 'true');
+            } catch (e) {}
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(10px)';
+            setTimeout(() => {
+                if (toast.parentNode) toast.parentNode.removeChild(toast);
+            }, 300);
+        }
+
+        const container = document.body || document.documentElement;
+        if (container) {
+            container.appendChild(toast);
+            const closeBtn = document.getElementById('ikbot-auth-close-btn');
+            const okBtn = document.getElementById('ikbot-auth-ok-btn');
+            if (closeBtn) closeBtn.onclick = dismissToast;
+            if (okBtn) okBtn.onclick = dismissToast;
+
+            setTimeout(() => {
+                if (document.getElementById('ikbot-auth-toast')) {
+                    dismissToast();
+                }
+            }, 15000);
+        }
     }
 
     // 启动海报修复引擎
@@ -401,6 +484,7 @@
         // 动态监听后续页面加载或翻页新增的图片
         const domObserver = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
+                // 1. 发现新增图片节点
                 for (const node of mutation.addedNodes) {
                     if (node.nodeType === 1) { // ELEMENT_NODE
                         if (node.tagName === 'IMG') {
@@ -410,9 +494,30 @@
                         }
                     }
                 }
+                // 2. 守护已修复的海报，防止官方或第三方脚本在页面渲染后回退/覆盖海报链接
+                if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
+                    const target = mutation.target;
+                    if (target.dataset && target.dataset.ikbotFixed === 'true' && target.dataset.ikbotBlobUrl) {
+                        if (target.src !== target.dataset.ikbotBlobUrl) {
+                            target.src = target.dataset.ikbotBlobUrl;
+                        }
+                    }
+                }
             }
         });
-        domObserver.observe(document.documentElement, { childList: true, subtree: true });
+        domObserver.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['src', 'data-src']
+        });
+
+        // 首次运行向用户友好引导授权
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', showPermissionGuideToast);
+        } else {
+            showPermissionGuideToast();
+        }
 
         // 双重保险：页面就绪和完全载入时再兜底扫描一次
         document.addEventListener('DOMContentLoaded', () => {
